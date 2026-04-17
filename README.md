@@ -1,140 +1,162 @@
+This **Apache Kafka IIoT Lab** is the enterprise-grade conclusion to your messaging protocol series. It demonstrates a distributed event-streaming architecture designed for high throughput and fault tolerance.
+
+***
+
+# 🐘 Apache Kafka IIoT Data Pipeline
+
+A professional-grade simulation environment demonstrating **Apache Kafka (KRaft mode)** as a distributed event store. This stack ingest high-frequency sensor data into **TimescaleDB** for long-term analytics and **Grafana** for real-time visualization.
 
 
------
 
-# 🚀 Kafka KRaft & Kafka UI Lab
+---
 
-This laboratory provides a modern, Zookeeper-less setup for Apache Kafka using **KRaft mode**. It includes **Kafka UI** for visual cluster management and Python scripts for basic Producer/Consumer testing.
+## 🏗️ Architecture Components
 
-## 🛠️ Prerequisites
+1.  **Kafka (KRaft Mode):** The modern, ZooKeeper-less distribution of Apache Kafka handling high-frequency event streams.
+2.  **Kafka-UI:** A web-based management console for inspecting topics, consumers, and message payloads.
+3.  **TimescaleDB:** Our persistent "Historian" database, optimized for time-series data using Hypertables.
+4.  **Kafka Logic App:**
+    * **The Producer:** Generates industrial telemetry (JSON) and flushes it to the `factory_telemetry` topic.
+    * **The Consumer:** Joins a `db-ingest-group` to poll messages and persist them into the database.
+5.  **Grafana:** Visualizes the telemetry stream directly from the database.
 
-  - **Docker & Docker Compose** installed.
-  - **Python 3.8+** (for testing scripts).
-  - `confluent-kafka` Python library:
-    ```bash
-    pip install confluent-kafka
-    ```
+---
 
-## 🏗️ Architecture
+## 📂 Project Structure
 
-The setup utilizes a **Dual-Listener** configuration to solve the common "Docker Networking" conflict where external scripts cannot find the broker.
-
-  - **INTERNAL (29092):** Used by Kafka UI and other containerized services to communicate within the Docker network.
-  - **EXTERNAL (9092):** Used by your host machine (IDE, CLI, Python scripts) to connect to the broker.
-
------
-
-## 🚀 Getting Started
-
-### 1\. The Docker Compose File
-
-Create a `docker-compose.yml` file with the following content:
-
-```yaml
-version: '3.8'
-
-services:
-  kafka:
-    image: apache/kafka:latest
-    container_name: kafka
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: 'broker,controller'
-      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
-      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
-      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://kafka:29092,EXTERNAL://localhost:9092'
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT'
-      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
-      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
-      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    container_name: kafka-ui
-    ports:
-      - "8080:8080"
-    depends_on:
-      - kafka
-    environment:
-      KAFKA_CLUSTERS_0_NAME: local-kraft
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
-      DYNAMIC_CONFIG_ENABLED: 'true'
+```text
+KAFKA_PLAYGROUND/
+├── database/
+│   └── init-db.sql          # SQL Schema & Hypertable setup
+├── scripts/
+│   ├── Dockerfile           # Builds Python + librdkafka environment
+│   ├── requirements.txt     # confluent-kafka & psycopg2
+│   └── kafka_app.py         # Multi-threaded Producer/Consumer script
+├── Makefile                 # Simplified dev workflow
+└── docker-compose.yml       # Orchestrates the Kafka cluster & DB
 ```
 
-### 2\. Start the Cluster
+---
 
-Run the following command. The `-v` flag ensures a clean state by removing any old metadata volumes.
+## 🚀 Deployment Guide
 
+### 1. Spin up the Cluster
+Execute the one-command setup to build the logic app and launch the services:
 ```bash
-docker-compose down -v && docker-compose up -d
+make build
 ```
 
-### 3\. Access the Dashboard
+### 2. Monitor the Management UI
+Kafka can be complex to visualize via CLI. Access the Web UI to see your topics in real-time:
+* **Kafka UI:** `http://localhost:8080`
+* **Grafana:** `http://localhost:3000` (Admin/Admin)
 
-Open your browser to: **[http://localhost:8080](https://www.google.com/search?q=http://localhost:8080)**
+### 3. Verify Data Persistence
+Check the Python logs to ensure the Consumer is successfully writing to the database:
+```bash
+make logs
+```
+To effectively visualize your **Apache Kafka** data in **Grafana**, you need to connect to **TimescaleDB** as your data source. Since you are using a hypertable, Grafana can handle the time-series visualization efficiently using standard SQL with some Grafana-specific macros.
 
------
+### 1. Add the Data Source
+1.  Open Grafana at `http://localhost:3000`.
+2.  Go to **Connections** > **Data Sources** > **Add data source**.
+3.  Select **PostgreSQL**.
+4.  Configure the settings:
+    * **Host:** `timescaledb:5432`
+    * **Database:** `postgres`
+    * **User:** `postgres`
+    * **Password:** `password`
+    * **TLS Mode:** `disable`
+    * **Version:** `15` (Matches your docker image)
+    * **TimescaleDB:** Set to **Enabled** (This is crucial for performance).
 
-## 🐍 Testing with Python
+---
 
-### `producer.py`
+### 2. The Time-Series Query
+When you create a new **Time series** panel, use the following SQL. This query uses the `$__timeFilter` macro to ensure Grafana only pulls data for the time range selected in the dashboard picker.
 
-```python
-import json
-from confluent_kafka import Producer
-
-conf = {
-    'bootstrap.servers': '127.0.0.1:9092',  # Using the EXTERNAL listener
-    'client.id': 'python-producer'
-}
-
-producer = Producer(conf)
-
-def delivery_report(err, msg):
-    if err is not None:
-        print(f"❌ Delivery failed: {err}")
-    else:
-        print(f"✅ Delivered to {msg.topic()} [{msg.partition()}]")
-
-sample_data = {"status": "success", "message": "Hello from Python!", "id": 101}
-producer.produce("test-topic", json.dumps(sample_data).encode('utf-8'), callback=delivery_report)
-producer.flush()
+```sql
+SELECT
+  time_bucket('$__interval', time) AS "time",
+  topic AS "metric",
+  avg(value) AS "Temperature"
+FROM kafka_data
+WHERE
+  time >= $__timeFrom() AND time <= $__timeTo()
+GROUP BY 1, 2
+ORDER BY 1
 ```
 
-### `consumer.py`
+---
 
-```python
-from confluent_kafka import Consumer
+### 3. Understanding the Macros
+To become an expert in Grafana for IoT, you should understand how these macros translate to raw SQL:
 
-conf = {
-    'bootstrap.servers': '127.0.0.1:9092',
-    'group.id': 'python-consumer-group',
-    'auto.offset.reset': 'earliest'
-}
+* **`$__timeFilter(time)`**: Automatically injects a `WHERE` clause based on your dashboard's time picker (e.g., `time BETWEEN '2026-04-17T10:00:00Z' AND '2026-04-17T11:00:00Z'`).
+* **`$__timeGroupAlias(time, $__interval)`**: This is the "magic" of Grafana. It groups your high-frequency Kafka data into buckets (e.g., every 5 seconds or 1 minute) based on how far you are zoomed out, preventing the browser from crashing due to too many data points.
+* **`GROUP BY 1, 3`**: Refers to the first column (the grouped time) and the third column (the topic/sensor name).
 
-consumer = Consumer(conf)
-consumer.subscribe(["test-topic"])
 
-try:
-    while True:
-        msg = consumer.poll(1.0)
-        if msg is None: continue
-        print(f"📩 Received: {msg.value().decode('utf-8')}")
-except KeyboardInterrupt:
-    pass
-finally:
-    consumer.close()
+
+---
+
+### 4. Advanced: Detecting Anomalies
+Since you are using TimescaleDB, you can run advanced analytics directly in the Grafana query. For example, to see the **Moving Average** of your Kafka stream to smooth out noise:
+
+```sql
+SELECT
+  time,
+  avg(value) OVER (ORDER BY time ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) as "Smoothed Temp"
+FROM kafka_data
+WHERE $__timeFilter(time)
+ORDER BY time ASC
 ```
 
------
+---
 
-## 📝 Troubleshooting
+### 5. Final Checklist for your README
+Add this snippet to your **README.md** to help others (or your future self) set up the dashboard quickly:
 
-| Issue | Solution |
+```markdown
+### 📊 Grafana Setup Cheat Sheet
+1. **Source:** PostgreSQL (`timescaledb:5432`)
+2. **Table:** `kafka_data`
+3. **Time Column:** `time`
+4. **Metric Column:** `value`
+5. **Recommended Panel:** Time Series
+```
+
+By mastering these queries, you've completed the full "Edge to Insight" pipeline: 
+**Hardware Simulation (Python) ➔ Streaming (Kafka) ➔ Storage (TimescaleDB) ➔ Visualization (Grafana).**
+---
+
+## 🔬 Expert Concepts: Why Kafka?
+
+Kafka is different from MQTT and NATS because it is a **Pull-based** system with **Log Retention**.
+
+| Feature | MQTT / NATS (Standard) | Apache Kafka |
+| :--- | :--- | :--- |
+| **Storage** | Ephemeral (unless JS enabled) | Durable (Stored on disk by default) |
+| **Data Flow** | Broker "Pushes" to Client | Client "Polls" (Pulls) from Broker |
+| **Scaling** | Limited by single node | Scales horizontally via **Partitions** |
+| **Replay** | Usually not possible | Can "rewind" and replay old data |
+
+
+
+---
+
+## 🛠️ Management Commands
+
+| Command | Purpose |
 | :--- | :--- |
-| **Connection Refused** | Ensure `ports: - "9092:9092"` is in your YAML. |
-| **No such host is known** | In Python, use `127.0.0.1:9092`, not `kafka:9092`. |
-| **Metadata Conflict** | Run `docker-compose down -v` to wipe the KRaft state. |
+| `make build` | Builds images and starts the cluster. |
+| `make up` | Starts the containers without rebuilding. |
+| `make logs` | Streams the Producer/Consumer logs. |
+| `make db-shell` | Connects to the SQL terminal. |
+| `make clean` | **Destructive:** Wipes all Kafka topics and DB records. |
+
+---
+
+## 🏁 Final Project Goal
+Once this stack is running, try stopping the `kafka-logic` container for 1 minute while keeping `kafka` running. When you restart the logic app, observe how the **Consumer** automatically "catches up" by reading the messages that were stored in the Kafka log while it was away. This is the **durability** that makes Kafka the backbone of modern industrial data platforms.
